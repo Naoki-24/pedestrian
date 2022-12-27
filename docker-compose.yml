@@ -7,8 +7,8 @@ services:
     container_name: 'pipbase'
     tty: true
     volumes:
-     - ./:/root/src
-     - ./usb/JAAD:/root/img
+     - ./:/workspaces/src
+     - /media/naoki/2.5 HDD1 500GB2/JAAD:/workspaces/img
     deploy:
       resources:
         reservations:

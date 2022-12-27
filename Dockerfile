@@ -2,12 +2,13 @@
 FROM tensorflow/tensorflow:latest-gpu
 USER root
 
-RUN mkdir -p /root/src
-RUN mkdir -p /root/img
-COPY requirements.txt /root/src
-WORKDIR /root/src
+RUN mkdir -p /workspaces/src
+RUN mkdir -p /workspaces/img
+COPY requirements.txt /workspaces/src
+WORKDIR /workspaces/src
 
-RUN apt-get install -y libgl1-mesa-dev pip wget unzip
+RUN apt-get update && apt-get upgrade -y
+RUN apt-get install -y libgl1-mesa-dev pip wget unzip graphviz
 RUN pip install --upgrade pip setuptools
 
 RUN pip3 install -r ./requirements.txt

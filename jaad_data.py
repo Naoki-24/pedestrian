@@ -1,31 +1,23 @@
 """
 Interface for the JAAD dataset:
-
 A. Rasouli, I. Kotseruba, and J. K. Tsotsos,“Are they going to cross?
 a benchmark dataset and baseline for pedestrian crosswalk behavior,” In Proc.
 ICCV Workshop, 2017, pp. 206–213.
-
 A. Rasouli, I. Kotseruba, and J. K. Tsotsos, “Agreeing to cross: How drivers
 and pedestrians communicate,” In Proc. Intelligent Vehicles Symposium (IV),
 2017, pp. 264–269.
-
 I. Kotseruba, A. Rasouli, and J. K. Tsotsos, “Joint attention in autonomous
  driving (jaad),” arXiv:1609.04741, 2016.
-
 MIT License
-
 Copyright (c) 2018 I. Kotseruba
-
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
 in the Software without restriction, including without limitation the rights
 to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
 copies of the Software, and to permit persons to whom the Software is
 furnished to do so, subject to the following conditions:
-
 The above copyright notice and this permission notice shall be included in all
 copies or substantial portions of the Software.
-
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
 FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -33,7 +25,6 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
 """
 import sys
 import pickle
@@ -489,7 +480,6 @@ class JAAD(object):
                     ped_sign: int
                     stop_sign: int
                     traffic_light: int
-
         :return: A database dictionary
         """
         print('---------------------------------------------------------')
@@ -1143,6 +1133,8 @@ class JAAD(object):
         intent_seq = []
         vehicle_seq = []
         activities = []
+        look_seq = []
+        action_seq = []
 
         video_ids, _pids = self._get_data_ids(image_set, params)
 
@@ -1176,6 +1168,12 @@ class JAAD(object):
                 images = [self._get_image_path(vid, f) for f in frame_ids]
                 occlusions = pid_annots[pid]['occlusion'][:end_idx + 1]
 
+                look = pid_annots[pid]['behavior']['look'][:end_idx + 1]
+                look = np.array(look)
+                look = look.reshape([len(look), 1]).tolist()
+                action = pid_annots[pid]['behavior']['action'][:end_idx + 1]
+
+
                 if height_rng[0] > 0 or height_rng[1] < float('inf'):
                     images, boxes, frame_ids, occlusions = self._height_check(height_rng,
                                                                               frame_ids, boxes,
@@ -1191,6 +1189,8 @@ class JAAD(object):
                 box_seq.append(boxes[::seq_stride])
                 center_seq.append([self._get_center(b) for b in boxes][::seq_stride])
                 occ_seq.append(occlusions[::seq_stride])
+                look_seq.append(look[::seq_stride])
+                action_seq.append(action[::seq_stride])
 
                 ped_ids = [[pid]] * len(boxes)
                 pids_seq.append(ped_ids[::seq_stride])
@@ -1222,7 +1222,9 @@ class JAAD(object):
                 'vehicle_act': vehicle_seq,
                 'intent': intent_seq,
                 'activities': activities,
-                'image_dimension': (img_width, img_height)}
+                'image_dimension': (img_width, img_height),
+                'look': look_seq,
+                'action': action_seq}
 
     def _get_intention(self, image_set, annotations, **params):
         """

@@ -11,6 +11,7 @@ from tensorflow.keras import backend as K
 from action_predict import action_prediction
 from action_predict import ActionPredict
 #from new_model import NewModel, HybridModel, MultiRNN3D, MultiRNN3D_MATT
+from save_result import save_history_and_predict
 
 from jaad_data import JAAD
 
@@ -75,18 +76,6 @@ def run(config_file=None):
         for k, v in configs.items():
             print(k,v)
 
-        # set batch size
-        if model_name in ['ConvLSTM']:
-            configs['train_opts']['batch_size'] = 2
-        if model_name in ['C3D', 'I3D']:
-            configs['train_opts']['batch_size'] = 16
-        if model_name in ['PCPA']:
-            configs['train_opts']['batch_size'] = 8
-        if 'MultiRNN' in model_name:
-            configs['train_opts']['batch_size'] = 8
-        if model_name in ['TwoStream']:
-            configs['train_opts']['batch_size'] = 16
-
         if configs['model_opts']['dataset'] == 'pie':
             imdb = PIE(data_path=os.environ.copy()['PIE_PATH'])
         elif configs['model_opts']['dataset'] == 'jaad':
@@ -96,7 +85,7 @@ def run(config_file=None):
         beh_seq_train = imdb.generate_data_trajectory_sequence('train', **configs['data_opts'])
         beh_seq_val = None 
         # Uncomment the line below to use validation set
-        #beh_seq_val = imdb.generate_data_trajectory_sequence('val', **configs['data_opts'])
+        # beh_seq_val = imdb.generate_data_trajectory_sequence('val', **configs['data_opts'])
         beh_seq_test = imdb.generate_data_trajectory_sequence('test', **configs['data_opts'])
 
         # get the model
@@ -123,6 +112,8 @@ def run(config_file=None):
 
         print('Model saved to {}'.format(saved_files_path))
 
+        save_history_and_predict(saved_files_path)
+
 def usage():
     """
     Prints help
@@ -136,28 +127,5 @@ def usage():
     print()
 
 if __name__ == '__main__':
-    try:
-        opts, args = getopt.getopt(sys.argv[1:], 'hc:', ['help', 'config_file'])
-    except getopt.GetoptError as err:
-        print(str(err))
-        usage()
-        sys.exit(2)    
-
-    config_file = None
-    model_name = None
-    dataset = None
-
-    for o, a in opts:
-        if o in ["-h", "--help"]:
-            usage()
-            sys.exit(2)
-        elif o in ['-c', '--config_file']:
-            config_file = a
-
-    # if neither the config file or model name are provided
-    if not config_file:
-        print('\x1b[1;37;41m' + 'ERROR: Provide path to config file!' + '\x1b[0m')
-        usage()
-        sys.exit(2)
-
+    config_file = 'config_files/PCPA.yaml'
     run(config_file=config_file)
