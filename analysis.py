@@ -2,8 +2,6 @@ from jaad_data import JAAD
 import pandas as pd
 import os
 
-
-
 def reshape_pid(database):
     for i in range(len(database['pid'])):
         database['pid'][i] = database['pid'][i][0][0]
@@ -38,7 +36,6 @@ def search_data(dtype, output, database):
             'gt': gt,
             'y': y,
             'look': look_list,
-            'obs_look': obs_look,
             'obs is look': 1 if obs_is_look else 0,
             'is look': 1 if is_look else 0,
             'action': action[0] if len(set(action)) else action
@@ -53,7 +50,7 @@ def search_data(dtype, output, database):
     if not os.path.isdir(saved_file_path):
         os.mkdir(saved_file_path)
     df = pd.DataFrame(search_list)
-    df.to_csv(os.path.join(saved_file_path,'analysis_box.csv'), index=False)
+    df.to_csv(os.path.join(saved_file_path,'analysis_all_box.csv'), index=False)
 
     return
 
@@ -62,9 +59,9 @@ def get_database():
         'fstride': 1,
         'sample_type': 'beh',
         'seq_type': 'crossing',
-        'data_split_type': 'default'
+        'data_split_type': 'kfold'
     }
-    jaad = JAAD('../img')
+    jaad = JAAD('../JAAD')
     test_data = jaad.generate_data_trajectory_sequence('test', **opt)
 
     return test_data
@@ -72,9 +69,9 @@ def get_database():
 if __name__== '__main__':
     database = get_database()
 
-    analysis_path = 'data/models/jaad/PCPA/Hierarchical/result.csv'
-    compared_path = 'data/models/jaad/PCPA/Hierarchical_no_box/result.csv'
-    analysis_type = 'box'
+    analysis_path = 'data/models/jaad/LaterFusion/14Feb2023-09h37m38s/result.csv'
+    compared_path = 'data/models/jaad/LaterFusion/14Feb2023-10h41m30s/result.csv'
+    analysis_type = 'looknolocal'
 
     analysis = pd.read_csv(analysis_path)
     compared = pd.read_csv(compared_path)

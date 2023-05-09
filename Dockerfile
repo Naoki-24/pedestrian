@@ -3,7 +3,7 @@ FROM tensorflow/tensorflow:latest-gpu
 USER root
 
 RUN mkdir -p /workspaces/src
-RUN mkdir -p /workspaces/img
+RUN mkdir -p /workspaces/JAAD && mkdir -p /workspaces/PIE
 COPY requirements.txt /workspaces/src
 WORKDIR /workspaces/src
 

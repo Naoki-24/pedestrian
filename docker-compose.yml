@@ -8,7 +8,8 @@ services:
     tty: true
     volumes:
      - ./:/workspaces/src
-     - /media/naoki/2.5 HDD1 500GB2/JAAD:/workspaces/img
+     - /media/naoki/2.5 HDD1 500GB8/JAAD:/workspaces/JAAD
+     - /media/naoki/2.5 HDD1 500GB8/PIE:/workspaces/PIE
     deploy:
       resources:
         reservations:
