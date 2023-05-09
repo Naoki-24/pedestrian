@@ -1,0 +1,10 @@
+{
+	"name": "pedestrian",
+	// Dockerfileでイメージ・コンテナを作成
+	"dockerComposeFile": "../docker-compose.yml",
+    "service": "pipbase",
+    "workspaceFolder": "/workspaces/src",
+	"extensions": [
+		"ms-python.python"
+	]
+}

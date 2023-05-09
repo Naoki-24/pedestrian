@@ -10,18 +10,29 @@ def save_history(base_path):
     with open(history_path, 'rb') as f:
         history = pickle.load(f)
     
-    loss = history['loss']
-    x = np.arange(1, len(loss)+1)
-    plt.plot(x, loss)
+    fig, ax = plt.subplots(1,2)
 
+    loss = history['loss']
+    acc = history['accuracy']
+
+    x = np.arange(1, len(loss)+1)
+    ax[0].plot(x, loss, label='loss')
+    ax[1].plot(x, acc, label='acc')
+
+    if 'val_loss' in history.keys() and 'val_accuracy' in history.keys():
+        val_loss = history['val_loss']
+        val_acc = history['val_accuracy']
+
+        ax[0].plot(x, val_loss, label='val_loss')
+        ax[1].plot(x, val_acc, label='val_acc')
+
+    fig.legend()
     saved_path = os.path.join(base_path, 'loss.jpg')
 
     if not os.path.exists(saved_path):
-        plt.savefig(saved_path)
+        fig.savefig(saved_path)
     else:
         print('the path is exists:{}'.format(saved_path))
-
-
 
 def save_predict(base_path):
     test_output_path = os.path.join(base_path, 'test_output.pkl')
@@ -52,7 +63,7 @@ def save_history_and_predict(base_path):
     save_predict(base_path)
 
 def main():
-    base_path = 'data/models/jaad/PCPA/29Nov2022-08h47m21s'
+    base_path = 'data/models/jaad/24Jan2023-08h10m10s'
     save_history_and_predict(base_path)
 
 if __name__ == "__main__":

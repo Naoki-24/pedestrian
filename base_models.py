@@ -98,7 +98,7 @@ def convert_to_fcn(model, classes=2, activation='softmax',
 
 
 def C3DNet(freeze_conv_layers=False, weights=None,
-           dense_activation='softmax', dropout=0.5, include_top=False):
+           dense_activation='softmax', dropout=0.5, include_top=False,input_data = Input(shape=(16, 112, 112, 3))):
     """
     C3D model implementation. Source: https://github.com/adamcasson/c3d
     Reference: Du Tran, Lubomir Bourdev, Rob Fergus, Lorenzo Torresani,and Manohar Paluri. 
@@ -112,7 +112,7 @@ def C3DNet(freeze_conv_layers=False, weights=None,
     Returns:
         C3D model
     """
-    input_data = Input(shape=(16, 112, 112, 3))
+    # input_data = Input(shape=(16, 112, 112, 3))
     model = Conv3D(64, 3, activation='relu', padding='same', name='conv1')(input_data)
     model = MaxPooling3D(pool_size=(1, 2, 2), strides=(1, 2, 2), padding='valid', name='pool1')(model)
     # 2nd layer group
@@ -157,6 +157,69 @@ def C3DNet(freeze_conv_layers=False, weights=None,
 
     return net_model
 
+
+def C3DNet2(freeze_conv_layers=False, weights=None,
+           dense_activation='softmax', dropout=0.5, include_top=False,input_data=Input(shape=(16, 112, 112, 3))):
+    """
+    C3D model implementation. Source: https://github.com/adamcasson/c3d
+    Reference: Du Tran, Lubomir Bourdev, Rob Fergus, Lorenzo Torresani,and Manohar Paluri.
+    Learning spatiotemporal features with 3D convolutional networks. ICCV, 2015.
+    Args:
+        freeze_conv_layers: Whether to freeze convolutional layers at the time of training
+        weights: Pre-trained weights
+        dense_activation: Activation of the last layer
+        dropout: Dropout of dense layers
+        include_top: Whether to add fc layers
+    Returns:
+        C3D model
+    """
+    # Input(shape=data_sizes[i], name='input_' + data_types[i])
+    # input_data = Input(shape=(16, 112, 112, 3))
+
+    model = Conv3D(64, 3, activation='relu', padding='same', name='conv1_2')(input_data)
+    model = MaxPooling3D(pool_size=(1, 2, 2), strides=(1, 2, 2), padding='valid', name='pool1_2')(model)
+    # 2nd layer group
+    model = Conv3D(128, 3, activation='relu', padding='same', name='conv2_2')(model)
+    model = MaxPooling3D(pool_size=(2, 2, 2), strides=(2, 2, 2), padding='valid', name='pool2_2')(model)
+    # 3rd layer group
+    model = Conv3D(256, 3, activation='relu', padding='same', name='conv3a_2')(model)
+    model = Conv3D(256, 3, activation='relu', padding='same', name='conv3b_2')(model)
+    model = MaxPooling3D(pool_size=(2, 2, 2), strides=(2, 2, 2), padding='valid', name='pool3_2')(model)
+    # 4th layer group
+    model = Conv3D(512, 3, activation='relu', padding='same', name='conv4a_2')(model)
+    model = Conv3D(512, 3, activation='relu', padding='same', name='conv4b_2')(model)
+    model = MaxPooling3D(pool_size=(2, 2, 2), strides=(2, 2, 2), padding='valid', name='pool4_2')(model)
+    # 5th layer group
+    model = Conv3D(512, 3, activation='relu', padding='same', name='conv5a_2')(model)
+    model = Conv3D(512, 3, activation='relu', padding='same', name='conv5b_2')(model)
+    model = ZeroPadding3D(padding=(0, 1, 1), name='zeropad5_2')(model)  # ((0, 0), (0, 1), (0, 1))
+    model = MaxPooling3D(pool_size=(2, 2, 2), strides=(2, 2, 2), padding='valid', name='pool5_2')(model)
+    model_flatten = Flatten(name='flatten_2')(model)
+
+    # # FC layers group
+    model = Dense(4096, activation='relu', name='fc6_2')(model_flatten)
+    model = Dropout(dropout)(model)
+    model = Dense(4096, activation='relu', name='fc7_2')(model)
+    model_fc7 = Dropout(dropout)(model)
+    model_fc8 = Dense(487, activation=dense_activation, name='fc8_2')(model_fc7)
+
+    net_model = Model(input_data, model_fc8)
+    if weights is not None:
+        net_model.load_weights(weights)
+
+    if include_top:
+        model_fc8_new = Dense(1, activation=dense_activation, name='fc8_2')(model_fc7)
+        net_model = Model(input_data, model_fc8_new)
+        if freeze_conv_layers:
+            for layer in model.layers[:-5]:
+                layer.trainable = False
+            for layer in model.layers:
+                print(layer.name, layer.trainable)
+    else:
+        net_model = Model(input_data, model_flatten)
+
+    return net_model
+
 def I3DNet(freeze_conv_layers=False, weights=None, classes=1,
            dense_activation='softmax', dropout=0.5, num_channels=3, include_top=False):
     """
@@ -185,7 +248,6 @@ def I3DNet(freeze_conv_layers=False, weights=None, classes=1,
                   use_bn=True,
                   name=None):
         """Utility function to apply conv3d + BN.
-
         # Arguments
             x: input tensor.
             filters: filters in `Conv3D`.
@@ -200,7 +262,6 @@ def I3DNet(freeze_conv_layers=False, weights=None, classes=1,
             name: name of the ops; will become `name + '_conv'`
                 for the convolution and `name + '_bn'` for the
                 batch norm layer.
-
         # Returns
             Output tensor after applying `Conv3D` and `BatchNormalization`.
         """

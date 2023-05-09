@@ -1167,11 +1167,15 @@ class JAAD(object):
                 frame_ids = frame_ids[: end_idx + 1]
                 images = [self._get_image_path(vid, f) for f in frame_ids]
                 occlusions = pid_annots[pid]['occlusion'][:end_idx + 1]
-
-                look = pid_annots[pid]['behavior']['look'][:end_idx + 1]
-                look = np.array(look)
-                look = look.reshape([len(look), 1]).tolist()
-                action = pid_annots[pid]['behavior']['action'][:end_idx + 1]
+                
+                if 'b' in pid:
+                    look = pid_annots[pid]['behavior']['look'][:end_idx + 1]
+                    look = np.array(look)
+                    look = look.reshape([len(look), 1]).tolist()
+                
+                    action = pid_annots[pid]['behavior']['action'][:end_idx + 1]
+                else:
+                    look = np.zeros((len(boxes), 1)).tolist()
 
 
                 if height_rng[0] > 0 or height_rng[1] < float('inf'):
@@ -1189,9 +1193,11 @@ class JAAD(object):
                 box_seq.append(boxes[::seq_stride])
                 center_seq.append([self._get_center(b) for b in boxes][::seq_stride])
                 occ_seq.append(occlusions[::seq_stride])
-                look_seq.append(look[::seq_stride])
-                action_seq.append(action[::seq_stride])
+                
+                if params['sample_type'] == 'beh':
+                    action_seq.append(action[::seq_stride])
 
+                look_seq.append(look[::seq_stride])
                 ped_ids = [[pid]] * len(boxes)
                 pids_seq.append(ped_ids[::seq_stride])
 

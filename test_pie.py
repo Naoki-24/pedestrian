@@ -61,8 +61,6 @@ def run(config_file=None):
         configs['model_opts']['time_to_event'][1]
     configs['data_opts']['min_track_size'] = configs['model_opts']['obs_length'] + tte
 
-    # configs['data_opts']['data_split_type'] = 'kfold'
-
     # update model and training options from the config file
     for dataset_idx, dataset in enumerate(model_configs['exp_opts']['datasets']):
         configs['data_opts']['sample_type'] = 'beh' if 'beh' in dataset else 'all'
@@ -71,9 +69,6 @@ def run(config_file=None):
         configs['train_opts']['batch_size'] = model_configs['exp_opts']['batch_size'][dataset_idx]
         configs['train_opts']['lr'] = model_configs['exp_opts']['lr'][dataset_idx]
         configs['train_opts']['epochs'] = model_configs['exp_opts']['epochs'][dataset_idx]
-        
-        if 'learning_scheduler' in model_configs.keys():
-            configs['train_opts']['learning_scheduler'] = model_configs['learning_scheduler'][0]
 
         model_name = configs['model_opts']['model']
         # Remove speed in case the dataset is jaad
@@ -92,15 +87,10 @@ def run(config_file=None):
         beh_seq_train = imdb.generate_data_trajectory_sequence('train', **configs['data_opts'])
         beh_seq_val = None
         # Uncomment the line below to use validation set
-        if configs['model_opts']['model'] == 'Pretrain_PIE':
-            configs['data_opts']['sample_type'] = 'beh'
-        beh_seq_test = imdb.generate_data_trajectory_sequence('test', **configs['data_opts'])
-        if configs['data_opts']['data_split_type'] == 'kfold':
-            if model_configs['exp_opts']['val']:
-                # configs['data_opts']['data_split_type'] = 'default'
-                pass
-        beh_seq_val = imdb.generate_data_trajectory_sequence('test', **configs['data_opts'])
+        beh_seq_val = imdb.generate_data_trajectory_sequence('val', **configs['data_opts'])
 
+        configs['data_opts']['sample_type'] = 'beh'
+        beh_seq_test = imdb.generate_data_trajectory_sequence('test', **configs['data_opts'])
 
         # get the model
         method_class = action_prediction(configs['model_opts']['model'])(**configs['net_opts'])

@@ -1,17 +1,12 @@
-
 import time
 import yaml
 import wget
 import cv2
 from utils import *
-from base_models import C3DNet
-from base_models import I3DNet
 from tensorflow.keras.layers import Input, Concatenate, Dense
 from tensorflow.keras.layers import GRU, LSTM, GRUCell
 from tensorflow.keras.layers import Dropout, LSTMCell, RNN
-from tensorflow.keras.utils import plot_model
-from tensorflow.keras.layers import Flatten, Average, Add
-# from tensorflow.keras.layers import ConvLSTM2D, Conv2D
+from tensorflow.keras.activations import softmax
 from tensorflow.keras.models import Model, load_model
 from tensorflow.keras.callbacks import ReduceLROnPlateau, EarlyStopping, ModelCheckpoint
 from tensorflow.keras.applications import vgg16, resnet50
@@ -20,11 +15,15 @@ from tensorflow.keras.optimizers import Adam, SGD, RMSprop
 from tensorflow.keras import regularizers
 from tensorflow.keras import backend as K
 from tensorflow.keras.utils import Sequence
+from tensorflow.keras.utils import plot_model
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 from sklearn.metrics import roc_auc_score, roc_curve, precision_recall_curve
-# from sklearn.svm import LinearSVC
-# from sklearn.pipeline import make_pipeline
-# from sklearn.preprocessing import StandardScaler
+from sklearn.svm import LinearSVC
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import StandardScaler
+
+import optuna
+from optuna_save_model import Callback
 
 
 ## For deeplabV3 (segmentation)
@@ -51,7 +50,6 @@ from tensorflow.keras.applications.vgg19 import VGG19
 from tensorflow.keras.preprocessing import image
 from tensorflow.keras.applications.vgg19 import preprocess_input
 from tensorflow.keras.models import Model
-import numpy as np
 
 
 ###############################################
@@ -342,8 +340,18 @@ class ActionPredict(object):
                         if flip_image:
                             img_features = cv2.flip(img_features, 1)
                     elif crop_type == 'local_context_cnn':
-                        img = image.load_img(imp, target_size=(224, 224))
-                        x = image.img_to_array(img)
+                        if set_id == 'images':
+                            img = image.load_img(imp, target_size=(224, 224))
+                            x = image.img_to_array(img)
+                        else:
+                            video_path = os.path.join('../PIE/PIE_clips', set_id, vid_id+ '.mp4')
+                            vidcap = cv2.VideoCapture(video_path)
+                            vidcap.set(cv2.CAP_PROP_POS_FRAMES, int(img_name))
+                            success, img = vidcap.read()
+                            if success:
+                                x = cv2.resize(img, target_dim)
+                            else:
+                                print('can\'t load video')
                         x = np.expand_dims(x, axis=0)
                         x = tf.keras.applications.vgg19.preprocess_input(x)
                         block4_pool_features = VGGmodel.predict(x)
@@ -354,7 +362,15 @@ class ActionPredict(object):
                         img_features = img_features.numpy()
 
                     elif crop_type == 'mask_cnn':
-                        img_data = cv2.imread(imp)
+                        if set_id == 'images':
+                            img_data = cv2.imread(imp)
+                        else:
+                            video_path = os.path.join('../PIE/PIE_clips', set_id, vid_id+ '.mp4')
+                            vidcap = cv2.VideoCapture(video_path)
+                            vidcap.set(cv2.CAP_PROP_POS_FRAMES, int(img_name))
+                            success, img_data = vidcap.read()
+                            if not success:
+                                print('can\'t load video')              
                         ori_dim = img_data.shape
                         # bbox = jitter_bbox(imp, [b], 'enlarge', crop_resize_ratio)[0]
                         # bbox = squarify(bbox, 1, img_data.shape[1])
@@ -646,7 +662,8 @@ class ActionPredict(object):
         normalize = opts['normalize_boxes']
 
         try:
-            d['speed'] = data_raw['obd_speed'].copy()
+            # d['speed'] = data_raw['obd_speed'].copy()
+            d['speed'] = data_raw['vehicle_act'].copy()
         except KeyError:
             d['speed'] = data_raw['vehicle_act'].copy()
             print('Jaad dataset does not have speed information')
@@ -823,18 +840,8 @@ class ActionPredict(object):
                                                      **data_gen_params)
 
     def get_data(self, data_type, data_raw, model_opts):
-        """
-        Generates data train/test/val data
-        Args:
-            data_type: Split type of data, whether it is train, test or val
-            data_raw: Raw tracks from the dataset
-            model_opts: Model options for generating data
-        Returns:
-            A dictionary containing, data, data parameters used for model generation,
-            effective dimension of data (the number of rgb images to be used calculated accorfing
-            to the length of optical flow window) and negative and positive sample counts
-        """
-
+        assert model_opts['obs_length'] == 16
+        model_opts['normalize_boxes'] = False
         self._generator = model_opts.get('generator', False)
         data_type_sizes_dict = {}
         process = model_opts.get('process', True)
@@ -844,15 +851,22 @@ class ActionPredict(object):
         data_type_sizes_dict['box'] = data['box'].shape[1:]
         if 'speed' in data.keys():
             data_type_sizes_dict['speed'] = data['speed'].shape[1:]
+        # if 'context_cnn' in data.keys():
+        #     data_type_sizes_dict['context_cnn'] = data['context_cnn'].shape[1:]
 
         # Store the type and size of each image
         _data = []
         data_sizes = []
         data_types = []
 
+        model_opts_3d = model_opts.copy()
+
         for d_type in model_opts['obs_input_type']:
             if 'local' in d_type or 'context' in d_type or 'mask' in d_type:
-                features, feat_shape = self.get_context_data(model_opts, data, data_type, d_type)
+                if self._backbone == 'c3d':
+                    model_opts_3d['target_dim'] = (112, 112)
+                model_opts_3d['process'] = False
+                features, feat_shape = self.get_context_data(model_opts_3d, data, data_type, d_type)
             elif 'pose' in d_type:
                 path_to_pose, _ = get_path(save_folder='poses',
                                            dataset=dataset,
@@ -863,31 +877,37 @@ class ActionPredict(object):
                                     file_path=path_to_pose,
                                     dataset=model_opts['dataset'])
                 feat_shape = features.shape[1:]
+            elif 'boxY' in d_type:
+                features = data['box'][0:, 0:, 1::2]
+                feat_shape = features.shape[1:]
+            elif 'boxX' in d_type:
+                features = data['box'][0:, 0:, 0::2]
+                feat_shape = features.shape[1:]
             else:
                 features = data[d_type]
                 feat_shape = features.shape[1:]
             _data.append(features)
             data_sizes.append(feat_shape)
             data_types.append(d_type)
-
         # create the final data file to be returned
         if self._generator:
             _data = (DataGenerator(data=_data,
                                    labels=data['crossing'],
                                    data_sizes=data_sizes,
                                    process=process,
-                                   global_pooling=self._global_pooling,
+                                   global_pooling=None,
                                    input_type_list=model_opts['obs_input_type'],
                                    batch_size=model_opts['batch_size'],
                                    shuffle=data_type != 'test',
-                                   to_fit=data_type != 'test'), data['crossing']) # set y to None
+                                   to_fit=data_type != 'test'), data['crossing'])  # set y to None
+        # global_pooling=self._global_pooling,
         else:
             _data = (_data, data['crossing'])
 
         return {'data': _data,
                 'ped_id': data['ped_id'],
-                'image': data['image'],
                 'tte': data['tte'],
+                'image': data['image'],
                 'data_params': {'data_types': data_types, 'data_sizes': data_sizes},
                 'count': {'neg_count': neg_count, 'pos_count': pos_count}}
 
@@ -924,6 +944,33 @@ class ActionPredict(object):
         #     fid.write("%s: %s\n" % ('lr', str(lr)))
 
         print('Wrote configs to {}'.format(config_path))
+
+    def _save_opts(self,
+                    path_params,
+                    lr,
+                    batch_size,
+                    epochs,
+                    model_opts,
+                    history=None):
+        
+        # Save data options and configurations
+        model_opts_path, _ = get_path(**path_params, file_name='model_opts.pkl')
+        with open(model_opts_path, 'wb') as fid:
+            pickle.dump(model_opts, fid, pickle.HIGHEST_PROTOCOL)
+
+        config_path, _ = get_path(**path_params, file_name='configs.yaml')
+        self.log_configs(config_path, batch_size, epochs,
+                         lr, model_opts)
+
+        # Save training history
+        if history is not None:
+            history_path, saved_files_path = get_path(**path_params, file_name='history.pkl')
+            with open(history_path, 'wb') as fid:
+                pickle.dump(history.history, fid, pickle.HIGHEST_PROTOCOL)
+
+        else:
+            _, saved_files_path = get_path(**path_params, file_name='history.pkl')
+        return saved_files_path
 
     def class_weights(self, apply_weights, sample_count):
         """
@@ -964,7 +1011,7 @@ class ActionPredict(object):
             callbacks = []
             if 'early_stop' in learning_scheduler:
                 default_params = {'monitor': 'val_loss',
-                                  'min_delta': 1.0, 'patience': 5,
+                                  'min_delta': 0.0, 'patience': 5,
                                   'verbose': 1}
                 default_params.update(learning_scheduler['early_stop'])
                 callbacks.append(EarlyStopping(**default_params))
@@ -1002,7 +1049,8 @@ class ActionPredict(object):
         elif optimizer.lower() == 'rmsprop':
             return RMSprop
 
-    def train(self, data_train,
+    def train(self,
+              data_train,
               data_val=None,
               batch_size=2,
               epochs=60,
@@ -1028,10 +1076,9 @@ class ActionPredict(object):
         # Set the path for saving models
         model_folder_name = time.strftime("%d%b%Y-%Hh%Mm%Ss")
         path_params = {'save_folder': os.path.join(self.__class__.__name__, model_folder_name),
-                       'save_root_folder': 'data/models/',
-                       'dataset': model_opts['dataset']}
+                    'save_root_folder': 'data/models/',
+                    'dataset': model_opts['dataset']}
         model_path, _ = get_path(**path_params, file_name='model.h5')
-        model_img_path, _ = get_path(**path_params, file_name='model.jpg')
 
         # Read train data
         data_train = self.get_data('train', data_train, {**model_opts, 'batch_size': batch_size}) 
@@ -1042,7 +1089,9 @@ class ActionPredict(object):
                 data_val = data_val[0]
 
         # Create model
-        train_model = self.get_model(data_train['data_params'], model_img_path)
+        model_img_path, _ = get_path(**path_params, file_name='model.jpg')
+        train_model = self.get_model(data_train['data_params'])
+        plot_model(train_model, to_file=model_img_path)
 
         # Train the model
         class_w = self.class_weights(model_opts['apply_class_weights'], data_train['count'])
@@ -1050,34 +1099,21 @@ class ActionPredict(object):
         train_model.compile(loss='binary_crossentropy', optimizer=optimizer, metrics=['accuracy'])
         ## reivse fit
         callbacks = self.get_callbacks(learning_scheduler, model_path)
-
         # data_val = data_val.batch(batch_size)
         history = train_model.fit(x=data_train['data'][0],
-                                  y=None if self._generator else data_train['data'][1],
-                                  batch_size=batch_size,
-                                  epochs=epochs,
-                                  validation_data=data_val,
-                                  class_weight=class_w,
-                                  verbose=1,
-                                  callbacks=callbacks)
+                                y=None if self._generator else data_train['data'][1],
+                                batch_size=batch_size,
+                                epochs=epochs,
+                                validation_data=data_val,
+                                class_weight=class_w,
+                                verbose=1,
+                                callbacks=callbacks)
+
         if 'checkpoint' not in learning_scheduler:
             print('Train model is saved to {}'.format(model_path))
             train_model.save(model_path)
-
-        # Save data options and configurations
-        model_opts_path, _ = get_path(**path_params, file_name='model_opts.pkl')
-        with open(model_opts_path, 'wb') as fid:
-            pickle.dump(model_opts, fid, pickle.HIGHEST_PROTOCOL)
-
-        config_path, _ = get_path(**path_params, file_name='configs.yaml')
-        self.log_configs(config_path, batch_size, epochs,
-                         lr, model_opts)
-
-        # Save training history
-        history_path, saved_files_path = get_path(**path_params, file_name='history.pkl')
-        with open(history_path, 'wb') as fid:
-            pickle.dump(history.history, fid, pickle.HIGHEST_PROTOCOL)
-
+        
+        saved_files_path = self._save_opts(path_params, lr, batch_size, epochs, model_opts, history)
         return saved_files_path
 
     # Test Functions
@@ -1099,7 +1135,6 @@ class ActionPredict(object):
             #     model_opts = pickle.load(fid, encoding='bytes')
 
         test_model = load_model(os.path.join(model_path, 'model.h5'))
-        test_model.summary()
 
         test_data = self.get_data('test', data_test, {**opts['model_opts'], 'batch_size': 1})
 
@@ -1206,6 +1241,142 @@ class ActionPredict(object):
                                         bias_regularizer=self._regularizer, ))
         return RNN(cells, return_sequences=r_sequence, return_state=r_state)
 
+    def trainer(self,
+                trial,
+                data_train,
+                data_val,
+                path_params,
+                optimizer='adam',
+                learning_scheduler=None,
+                model_opts=None):
+        """
+        Trains the models
+        Args:
+            data_train: Training data
+            data_val: Validation data
+            batch_size: Batch size for training
+            epochs: Number of epochs to train
+            lr: Learning rate
+            optimizer: Optimizer for training
+            learning_scheduler: Whether to use learning schedulers
+            model_opts: Model options
+        Returns:
+            The path to the root folder of models
+        """
+        learning_scheduler = learning_scheduler or {}
+        lr = trial.suggest_loguniform('lr', 5e-8, 5e-3)
+        batch_size =trial.suggest_int('batch_size', 2, 16, step=2)
+        epochs = trial.suggest_int('epochs', 40, 80, step=10)
+
+        # Set the path for saving models
+        
+        model_path, _ = get_path(**path_params, file_name='model.h5')
+
+        # Read train data
+        data_train = self.get_data('train', data_train, {**model_opts, 'batch_size': batch_size}) 
+
+        if data_val is not None:
+            data_val = self.get_data('val', data_val, {**model_opts, 'batch_size': batch_size})['data']
+            if self._generator:
+                data_val = data_val[0]
+
+        # Create model
+        train_model = self.get_model(data_train['data_params'])
+
+        # Train the model
+        class_w = self.class_weights(model_opts['apply_class_weights'], data_train['count'])
+        optimizer = self.get_optimizer(optimizer)(learning_rate=lr)
+        train_model.compile(loss='binary_crossentropy', optimizer=optimizer, metrics=['accuracy'])
+        ## reivse fit
+        callbacks = self.get_callbacks(learning_scheduler, model_path)
+        # data_val = data_val.batch(batch_size)
+        history = train_model.fit(x=data_train['data'][0],
+                                y=None if self._generator else data_train['data'][1],
+                                batch_size=batch_size,
+                                epochs=epochs,
+                                validation_data=data_val,
+                                class_weight=class_w,
+                                verbose=1,
+                                callbacks=callbacks)
+        
+        return train_model, history
+
+    def tester(self, data_test, test_model, opts):
+        """
+        Evaluates a given model
+        Args:
+            data_test: Test data
+            model_path: Path to folder containing the model and options
+            save_results: Save output of the model for visualization and analysis
+        Returns:
+            Evaluation metrics
+        """
+
+        test_data = self.get_data('test', data_test, {**opts, 'batch_size': 1})
+
+        test_results = test_model.predict(test_data['data'][0], batch_size=1,
+                                        verbose=1)
+        acc = accuracy_score(test_data['data'][1], np.round(test_results))
+        
+        return acc
+
+    def objective_param(self, 
+                data_train, 
+                data_test,
+                path_params,
+                data_val=None, 
+                learning_scheduler=None,
+                model_opts=None,
+                callback=None):
+        
+        param = {
+            'data_train': data_train,
+            'data_val': data_val,
+            'path_params': path_params,
+            'learning_scheduler': learning_scheduler,
+            'model_opts': model_opts
+        }
+        def objective(trial):
+            model, history = self.trainer(trial, **param)
+            callback.register_model(trial.number, model, history)
+            acc = self.tester(data_test, model,  model_opts)
+            return acc
+        
+        return objective
+
+    def optimizing_train(self,
+                        data_train,
+                        data_test,
+                        data_val=None,
+                        batch_size=2,
+                        epochs=60,
+                        lr=0.000005,
+                        optimizer='adam',
+                        learning_scheduler=None,
+                        model_opts=None):
+
+        model_folder_name = time.strftime("%d%b%Y-%Hh%Mm%Ss")
+        path_params = {'save_folder': os.path.join(self.__class__.__name__, model_folder_name),
+                    'save_root_folder': 'data/models/',
+                    'dataset': model_opts['dataset']}
+        model_path, _ = get_path(**path_params, file_name='model.h5')
+        model_img_path, _ = get_path(**path_params, file_name='model.jpg')
+
+        callback = Callback(model_path, model_img_path)
+        objective = self.objective_param(data_train, data_test, path_params, data_val, learning_scheduler, model_opts, callback)
+        sampler = optuna.samplers.TPESampler(seed=1)
+        study = optuna.study.create_study(sampler=sampler, direction='maximize')
+        study.optimize(objective, n_trials=20, callbacks=[callback])
+        best_params = callback.get_best_param(study)
+
+        lr = best_params['lr']
+        batch_size = best_params['batch_size']
+        epochs = best_params['epochs']
+        history = best_params['history']
+
+        saved_files_path = self._save_opts(path_params, lr, batch_size, epochs, model_opts, history)
+        return saved_files_path
+
 
 def attention_3d_block(hidden_states, dense_size=128, modality=''):
     """
@@ -1224,208 +1395,14 @@ def attention_3d_block(hidden_states, dense_size=128, modality=''):
     # (batch_size, time_steps, hidden_size) dot   (batch_size, hidden_size)  => (batch_size, time_steps)
     h_t = Lambda(lambda x: x[:, -1, :], output_shape=(hidden_size,), name='last_hidden_state'+modality)(hidden_states)
     score = dot([score_first_part, h_t], [2, 1], name='attention_score'+modality)
-    attention_weights = Activation('softmax', name='attention_weight'+modality)(score)
+    # attention_weights = Activation('softmax', name='attention_weight'+modality)(score)
+    attention_weights = softmax(score)
     # (batch_size, time_steps, hidden_size) dot (batch_size, time_steps) => (batch_size, hidden_size)
     context_vector = dot([hidden_states, attention_weights], [1, 1], name='context_vector'+modality)
     pre_activation = concatenate([context_vector, h_t], name='attention_output'+modality)
     attention_vector = Dense(dense_size, use_bias=False, activation='tanh', name='attention_vector'+modality)(pre_activation)
     return attention_vector
-
-
-class PCPA(ActionPredict):
-
-    """
-    hierfusion MASK_PCPA
-    Class init function
-
-    Args:
-        num_hidden_units: Number of recurrent hidden layers
-        cell_type: Type of RNN cell
-        **kwargs: Description
-    """
-
-    def __init__(self,
-                 num_hidden_units=256,
-                 cell_type='gru',
-                 **kwargs):
-        """
-        Class init function
-
-        Args:
-            num_hidden_units: Number of recurrent hidden layers
-            cell_type: Type of RNN cell
-            **kwargs: Description
-        """
-        super().__init__(**kwargs)
-        # Network parameters
-        self._num_hidden_units = num_hidden_units
-        self._rnn = self._gru if cell_type == 'gru' else self._lstm
-        self._rnn_cell = GRUCell if cell_type == 'gru' else LSTMCell
-        # assert self._backbone in ['c3d', 'i3d'], 'Incorrect backbone {}! Should be C3D or I3D'.format(self._backbone)
-        self._3dconv = C3DNet if self._backbone == 'c3d' else I3DNet
-
-        # dropout = 0.0,
-        # dense_activation = 'sigmoid',
-        # freeze_conv_layers = False,
-        # weights = 'imagenet',
-        # num_classes = 1,
-        # backbone = 'vgg16',
-
-        # self._dropout = dropout
-        # self._dense_activation = dense_activation
-        # self._freeze_conv_layers = False
-        # self._weights = 'imagenet'
-        # self._num_classes = 1
-        # self._conv_models = {'vgg16': vgg16.VGG16, 'resnet50': resnet50.ResNet50, 'alexnet': AlexNet}
-        # self._backbone ='vgg16'
-
-    def get_data(self, data_type, data_raw, model_opts):
-        assert model_opts['obs_length'] == 16
-        model_opts['normalize_boxes'] = False
-        self._generator = model_opts.get('generator', False)
-        data_type_sizes_dict = {}
-        process = model_opts.get('process', True)
-        dataset = model_opts['dataset']
-        data, neg_count, pos_count = self.get_data_sequence(data_type, data_raw, model_opts)
-
-        data_type_sizes_dict['box'] = data['box'].shape[1:]
-        if 'speed' in data.keys():
-            data_type_sizes_dict['speed'] = data['speed'].shape[1:]
-        # if 'context_cnn' in data.keys():
-        #     data_type_sizes_dict['context_cnn'] = data['context_cnn'].shape[1:]
-
-        # Store the type and size of each image
-        _data = []
-        data_sizes = []
-        data_types = []
-
-        model_opts_3d = model_opts.copy()
-
-        for d_type in model_opts['obs_input_type']:
-            if 'local' in d_type or 'context' in d_type or 'mask' in d_type:
-                if self._backbone == 'c3d':
-                    model_opts_3d['target_dim'] = (112, 112)
-                model_opts_3d['process'] = False
-                features, feat_shape = self.get_context_data(model_opts_3d, data, data_type, d_type)
-            elif 'pose' in d_type:
-                path_to_pose, _ = get_path(save_folder='poses',
-                                           dataset=dataset,
-                                           save_root_folder='data/features')
-                features = get_pose(data['image'],
-                                    data['ped_id'],
-                                    data_type=data_type,
-                                    file_path=path_to_pose,
-                                    dataset=model_opts['dataset'])
-                feat_shape = features.shape[1:]
-            else:
-                features = data[d_type]
-                feat_shape = features.shape[1:]
-            _data.append(features)
-            data_sizes.append(feat_shape)
-            data_types.append(d_type)
-        # create the final data file to be returned
-        if self._generator:
-            _data = (DataGenerator(data=_data,
-                                   labels=data['crossing'],
-                                   data_sizes=data_sizes,
-                                   process=process,
-                                   global_pooling=None,
-                                   input_type_list=model_opts['obs_input_type'],
-                                   batch_size=model_opts['batch_size'],
-                                   shuffle=data_type != 'test',
-                                   to_fit=data_type != 'test'), data['crossing'])  # set y to None
-        # global_pooling=self._global_pooling,
-        else:
-            _data = (_data, data['crossing'])
-
-        return {'data': _data,
-                'ped_id': data['ped_id'],
-                'tte': data['tte'],
-                'image': data['image'],
-                'data_params': {'data_types': data_types, 'data_sizes': data_sizes},
-                'count': {'neg_count': neg_count, 'pos_count': pos_count}}
-
-    def _concat_tensor(self, x, input_tensor, data_type, return_sequence):
-        current = [x, input_tensor]
-        x = Concatenate(name='concat_'+data_type, axis=2)(current)
-        x = self._rnn(name='enc_' + data_type, r_sequence=return_sequence)(x)
-        return x
-
-    def get_model(self, data_params, model_img_path):
-        return_sequence = True
-        data_sizes = data_params['data_sizes']
-        data_types = data_params['data_types']
-        network_inputs = []
-        encoder_outputs = []
-        core_size = len(data_sizes)
-        num_vis_feature = 1
-        attention_size = self._num_hidden_units
-
-        if self._backbone == 'c3d' or 'i3d':
-            for i in range(num_vis_feature):
-                conv3d_model = self._3dconv()
-                network_inputs.append(conv3d_model.input)
-
-                if self._backbone == 'i3d':
-                    x = Flatten(name='flatten_output')(conv3d_model.output)
-                    x = Dense(name='emb_'+self._backbone,
-                            units=attention_size,
-                            activation='sigmoid')(x)
-                else:
-                    x = conv3d_model.output
-                    x = Dense(name='emb_'+self._backbone,
-                            units=attention_size,
-                            activation='sigmoid')(x)
-
-                encoder_outputs.append(x)
-
-        else:
-            for i in range(0, core_size):
-                network_inputs.append(Input(shape=data_sizes[i], name='input_' + data_types[i]))
-
-            for i in range(num_vis_feature):
-                x = self._rnn(name='enc_' + str(i) + data_types[i], r_sequence=return_sequence)(network_inputs[i])
-                encoder_outputs.append(x)
-
-            x = self._rnn(name='enc_' + str(num_vis_feature) + data_types[num_vis_feature], r_sequence=return_sequence)(network_inputs[num_vis_feature])
-            for i in range(num_vis_feature + 1, core_size):
-                x = self._concat_tensor(x, network_inputs[i], data_types[i], return_sequence)
-                encoder_outputs.append(x)
-
-        if len(encoder_outputs) > 1:
-            att_enc_out = []
-            # for recurrent branches apply many-to-one attention block
-            for i, enc_out in enumerate(encoder_outputs[0:]):
-                x = attention_3d_block(enc_out, dense_size=attention_size, modality='_' + data_types[i])
-                x = Dropout(0.5)(x)
-                x = Lambda(lambda x: K.expand_dims(x, axis=1))(x)
-                att_enc_out.append(x)
-            # aplly many-to-one attention block to the attended modalities
-            x = Concatenate(name='concat_modalities', axis=1)(att_enc_out)
-            encodings = attention_3d_block(x, dense_size=attention_size, modality='_modality')
-
-            # print(encodings.shape)
-            # print(weights_softmax.shape)
-        else:
-            encodings = encoder_outputs[0]
-            encodings = attention_3d_block(encodings, dense_size=attention_size, modality='_modality')
-
-        model_output = Dense(1, activation='sigmoid',
-                             name='output_dense',
-                             activity_regularizer=regularizers.l2(0.001))(encodings)
-
-        net_model = Model(inputs=network_inputs,
-                          outputs=model_output)
-        plot_model(net_model, to_file=model_img_path)
-        return net_model
-
-
-
-def action_prediction(model_name):
-    for cls in ActionPredict.__subclasses__():
-        if cls.__name__ == model_name:
-            return cls
-    raise Exception('Model {} is not valid!'.format(model_name))
+    
 
 
 class DataGenerator(Sequence):
