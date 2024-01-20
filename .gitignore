@@ -1,0 +1,6 @@
+save_data
+analysis
+analysis_*
+deeplabv3_mnv2_cityscapes_train_2018_02_05.tar.gz
+data
+test_pid_img

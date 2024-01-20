@@ -31,4 +31,3 @@ train_opts:
   batch_size: 32
   epochs: 20
   lr: 0.000005
-  learning_scheduler:
